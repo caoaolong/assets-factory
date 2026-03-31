@@ -1,0 +1,91 @@
+:root {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    color-scheme: dark;
+}
+
+/* 全局隐藏滚动条，保留滚动（滚轮、触控板、键盘仍有效；WebView2 / Firefox / Safari） */
+*,
+*::before,
+*::after {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* 旧版 Edge / IE */
+}
+
+*::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none; /* Chromium / WebKit */
+}
+
+#app {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+}
+
+/* 挂载根（如 n-config-provider）必须参与 flex，子树才能获得稳定高度，否则 n-layout 中间区塌缩、页脚会顶到菜单下方 */
+#app > * {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+html,
+body {
+    margin: 0;
+    height: 100%;
+    background: #1b1e24;
+}
+
+html.theme-light,
+html.theme-light body {
+    background: #e8eaed;
+}
+
+/* Dock 内各视图根节点共用（由 Naive 主题变量着色） */
+.workbench-dock-panel {
+    box-sizing: border-box;
+    height: 100%;
+    padding: 12px;
+    font-size: 12px;
+    overflow: auto;
+    background: var(--n-color-embedded);
+    color: var(--n-text-color);
+    border: 1px solid var(--n-border-color);
+}
+
+.workbench-dock-panel h3 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--n-text-color-2);
+}
+
+.workbench-dock-panel ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.workbench-dock-panel li {
+    padding: 4px 0;
+    border-bottom: 1px dashed var(--n-divider-color);
+}
+
+.workbench-dock-panel .muted {
+    color: var(--n-text-color-3);
+}
+
+.workbench-dock-panel pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-family: Consolas, "Courier New", monospace;
+    line-height: 1.5;
+}
