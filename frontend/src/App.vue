@@ -8,23 +8,23 @@ import {
   applyWailsWindowChrome,
   isWailsRuntime,
 } from './theme/applyTheme';
-import {
-  loadThemePreference,
-  resolveEffectiveTheme,
-  saveThemePreference,
-  type ThemePreference,
-} from './theme/settings';
+import {resolveEffectiveTheme, type ThemePreference} from './theme/settings';
+import {loadUserProfile, scheduleSaveUserProfile} from './config/userProfile';
 import {Quit} from '../wailsjs/runtime/runtime.js';
 import DebugView from './views/DebugView.vue';
 import InspectorView from './views/InspectorView.vue';
 import LogView from './views/LogView.vue';
+import PreferencesView from './views/PreferencesView.vue';
 import ProjectOutlineView from './views/ProjectOutlineView.vue';
+import ProjectSettingsView from './views/ProjectSettingsView.vue';
 import WorkspaceView from './views/WorkspaceView.vue';
 
 const dockLayout = ref<DockLayoutInterface>();
 
-const preferencesOpen = ref(false);
-const themePreference = ref<ThemePreference>(loadThemePreference());
+const profileReady = ref(false);
+/** 当前激活的 dock 面板 key（用于判断编辑区内「项目设置」等标签是否在前台） */
+const activeDockPanelKey = ref('workspace');
+const themePreference = ref<ThemePreference>('system');
 const systemIsDark = ref(
   typeof window !== 'undefined'
     ? window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -42,7 +42,6 @@ const naiveTheme = computed(() =>
 watch(
   [themePreference, systemIsDark],
   () => {
-    saveThemePreference(themePreference.value);
     applyDocumentTheme(
       resolveEffectiveTheme(themePreference.value, systemIsDark.value),
     );
@@ -51,7 +50,34 @@ watch(
   {immediate: true},
 );
 
+watch(themePreference, () => {
+  if (!profileReady.value) {
+    return;
+  }
+  scheduleSaveUserProfile({theme: themePreference.value});
+});
+
 let mediaQuery: MediaQueryList | null = null;
+
+/** 中间编辑区：可关闭面板（项目设置、首选项）的 key */
+const PANEL_PROJECT_SETTINGS = 'panel-project-settings';
+const PANEL_PREFERENCES = 'panel-preferences';
+
+/**
+ * 与官方示例一致：addPanel 时声明 closeable；已存在同 key 时库会移回目标网格，再 activePanel 即可聚焦。
+ */
+function openOrFocusClosableEditorTab(key: string, title: string) {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      const api = dockLayout.value;
+      if (!api) {
+        return;
+      }
+      api.addPanel({key, title, closeable: true}, 'editor');
+      api.activePanel(key);
+    });
+  });
+}
 
 function onSystemSchemeChange(ev: MediaQueryListEvent) {
   systemIsDark.value = ev.matches;
@@ -60,7 +86,16 @@ function onSystemSchemeChange(ev: MediaQueryListEvent) {
 function onGlobalKeydown(ev: KeyboardEvent) {
   if ((ev.ctrlKey || ev.metaKey) && ev.key === ',') {
     ev.preventDefault();
-    preferencesOpen.value = true;
+    openOrFocusClosableEditorTab(PANEL_PREFERENCES, '首选项');
+  }
+}
+
+function onDockActiveTabChange(
+  current: {key?: string} | null,
+  _last: unknown,
+) {
+  if (current && typeof current.key === 'string') {
+    activeDockPanelKey.value = current.key;
   }
 }
 
@@ -72,6 +107,7 @@ const menubarOptions: MenuOption[] = [
     children: [
       {label: '新建', key: 'file-new'},
       {type: 'divider', key: 'fd1'},
+      {label: '项目设置', key: 'file-project-settings'},
       {label: '首选项…', key: 'file-prefs'},
       {type: 'divider', key: 'fd2'},
       {label: '退出', key: 'file-quit'},
@@ -94,7 +130,9 @@ const menubarOptions: MenuOption[] = [
 function handleMenubarSelect(key: string | number) {
   const k = String(key);
   if (k === 'file-prefs') {
-    preferencesOpen.value = true;
+    openOrFocusClosableEditorTab(PANEL_PREFERENCES, '首选项');
+  } else if (k === 'file-project-settings') {
+    openOrFocusClosableEditorTab(PANEL_PROJECT_SETTINGS, '项目设置');
   } else if (k === 'file-quit' && isWailsRuntime()) {
     Quit();
   }
@@ -103,7 +141,7 @@ function handleMenubarSelect(key: string | number) {
 
 /**
  * 主界面：@imengyu/vue-dock-layout
- * 左：工程大纲 | 右：属性/检查器 | 中上：工作区 | 中下：日志 + 调试（各 1 个面板）
+ * 左：工程大纲 | 右：属性/检查器 | 中上：工作区（项目设置/首选项由菜单动态打开并可关闭） | 中下：日志 + 调试
  */
 function initWorkbenchDock(api: DockLayoutInterface | undefined) {
   if (!api) {
@@ -143,6 +181,11 @@ onMounted(() => {
   mediaQuery.addEventListener('change', onSystemSchemeChange);
   window.addEventListener('keydown', onGlobalKeydown);
 
+  void loadUserProfile().then((p) => {
+    themePreference.value = p.theme;
+    profileReady.value = true;
+  });
+
   nextTick(() => {
     requestAnimationFrame(() => {
       initWorkbenchDock(dockLayout.value);
@@ -181,13 +224,42 @@ onUnmounted(() => {
             class="dock-fill"
             :theme="effectiveDockTheme"
             :allow-float-window="false"
+            @active-tab-change="onDockActiveTabChange"
           >
+            <!-- 库内默认用 webpack require 加载 svg，在 Vite 下会失效；用插槽提供关闭图标 -->
+            <template #tabCloseIconRender>
+              <svg
+                class="dock-tab-close-icon"
+                viewBox="0 0 12 12"
+                width="14"
+                height="14"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  d="M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </template>
             <template #emptyPanel>
               <div class="dock-empty" />
             </template>
             <template #panelRender="{ panel }">
               <ProjectOutlineView v-if="panel.key === 'project-outline'" />
               <WorkspaceView v-else-if="panel.key === 'workspace'" />
+              <ProjectSettingsView
+                v-else-if="panel.key === PANEL_PROJECT_SETTINGS"
+                :visible="activeDockPanelKey === PANEL_PROJECT_SETTINGS"
+              />
+              <PreferencesView
+                v-else-if="panel.key === PANEL_PREFERENCES"
+                :theme="themePreference"
+                @update:theme="themePreference = $event"
+              />
               <LogView v-else-if="panel.key === 'panel-log'" />
               <DebugView v-else-if="panel.key === 'panel-debug'" />
               <InspectorView v-else-if="panel.key === 'inspector'" />
@@ -211,25 +283,6 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <n-modal
-      v-model:show="preferencesOpen"
-      preset="card"
-      title="设置"
-      :bordered="false"
-      style="width: min(440px, calc(100vw - 24px))"
-    >
-      <n-form label-placement="left" label-align="right" label-width="72">
-        <n-form-item label="主题">
-          <n-radio-group v-model:value="themePreference">
-            <n-space vertical :size="10">
-              <n-radio value="system">跟随系统</n-radio>
-              <n-radio value="light">亮色</n-radio>
-              <n-radio value="dark">暗色</n-radio>
-            </n-space>
-          </n-radio-group>
-        </n-form-item>
-      </n-form>
-    </n-modal>
   </n-config-provider>
 </template>
 
@@ -348,5 +401,16 @@ onUnmounted(() => {
 
 :deep(.dock-empty) {
   min-height: 100%;
+}
+
+/* tab 关闭按钮：与库 .close-icon 尺寸一致，随标签文字色 */
+:deep(.dock-tab-close-icon) {
+  display: block;
+  color: inherit;
+  opacity: 0.9;
+}
+
+.dock-palette--light :deep(.dock-tab-close-icon) {
+  opacity: 0.75;
 }
 </style>

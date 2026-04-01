@@ -5,3 +5,19 @@
 export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
 }
+
+export function ReadProfileJSON() {
+  return window['go']['main']['App']['ReadProfileJSON']();
+}
+
+export function ReadSettingsJSON() {
+  return window['go']['main']['App']['ReadSettingsJSON']();
+}
+
+export function WriteProfileJSON(arg1) {
+  return window['go']['main']['App']['WriteProfileJSON'](arg1);
+}
+
+export function WriteSettingsJSON(arg1) {
+  return window['go']['main']['App']['WriteSettingsJSON'](arg1);
+}
