@@ -2,7 +2,11 @@
 import {darkTheme, dateZhCN, zhCN} from 'naive-ui';
 import type {MenuOption} from 'naive-ui';
 import {computed, nextTick, onMounted, onUnmounted, ref, watch} from 'vue';
-import {DockLayout, type DockLayoutInterface} from '@imengyu/vue-dock-layout';
+import {
+  DockLayout,
+  type DockData,
+  type DockLayoutInterface,
+} from '@imengyu/vue-dock-layout';
 import {
   applyDocumentTheme,
   applyWailsWindowChrome,
@@ -10,7 +14,12 @@ import {
 } from './theme/applyTheme';
 import {resolveEffectiveTheme, type ThemePreference} from './theme/settings';
 import {loadUserProfile, scheduleSaveUserProfile} from './config/userProfile';
-import {Quit} from '../wailsjs/runtime/runtime.js';
+import {
+  Quit,
+  WindowIsMaximised,
+  WindowMinimise,
+  WindowToggleMaximise,
+} from '../wailsjs/runtime/runtime.js';
 import DebugView from './views/DebugView.vue';
 import InspectorView from './views/InspectorView.vue';
 import LogView from './views/LogView.vue';
@@ -20,6 +29,101 @@ import ProjectSettingsView from './views/ProjectSettingsView.vue';
 import WorkspaceView from './views/WorkspaceView.vue';
 
 const dockLayout = ref<DockLayoutInterface>();
+
+/** DockLayout 实例上除 Interface 外的方法（用于折叠侧栏/底栏） */
+type DockLayoutVm = DockLayoutInterface & {
+  findGrid: (name: string) => DockData | null;
+  forceFlushAllPanelPos: () => void;
+};
+
+function getDockVm(): DockLayoutVm | undefined {
+  return dockLayout.value as DockLayoutVm | undefined;
+}
+
+/** 折叠时侧栏宽度不能为 0，否则库会按「均分」处理；用极小占比代替隐藏 */
+const DOCK_HIDE_EPS = 0.01;
+
+const panelLeftVisible = ref(true);
+const panelRightVisible = ref(true);
+const panelBottomVisible = ref(true);
+
+/** 展开时恢复的占比（在每次收起前从当前布局读取） */
+const savedDockSizes = {
+  left: 18,
+  right: 20,
+  terminal: 28,
+};
+
+function flushDockLayout() {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      getDockVm()?.forceFlushAllPanelPos();
+    });
+  });
+}
+
+function toggleDockLeft() {
+  const vm = getDockVm();
+  const left = vm?.findGrid('left');
+  const center = vm?.findGrid('center');
+  if (!left || !center) {
+    return;
+  }
+  const eps = DOCK_HIDE_EPS;
+  if (panelLeftVisible.value) {
+    savedDockSizes.left = left.size;
+    center.size += left.size - eps;
+    left.size = eps;
+    panelLeftVisible.value = false;
+  } else {
+    center.size -= savedDockSizes.left - eps;
+    left.size = savedDockSizes.left;
+    panelLeftVisible.value = true;
+  }
+  flushDockLayout();
+}
+
+function toggleDockRight() {
+  const vm = getDockVm();
+  const right = vm?.findGrid('right');
+  const center = vm?.findGrid('center');
+  if (!right || !center) {
+    return;
+  }
+  const eps = DOCK_HIDE_EPS;
+  if (panelRightVisible.value) {
+    savedDockSizes.right = right.size;
+    center.size += right.size - eps;
+    right.size = eps;
+    panelRightVisible.value = false;
+  } else {
+    center.size -= savedDockSizes.right - eps;
+    right.size = savedDockSizes.right;
+    panelRightVisible.value = true;
+  }
+  flushDockLayout();
+}
+
+function toggleDockBottom() {
+  const vm = getDockVm();
+  const terminal = vm?.findGrid('terminal');
+  const editor = vm?.findGrid('editor');
+  if (!terminal || !editor) {
+    return;
+  }
+  const eps = DOCK_HIDE_EPS;
+  if (panelBottomVisible.value) {
+    savedDockSizes.terminal = terminal.size;
+    editor.size += terminal.size - eps;
+    terminal.size = eps;
+    panelBottomVisible.value = false;
+  } else {
+    editor.size -= savedDockSizes.terminal - eps;
+    terminal.size = savedDockSizes.terminal;
+    panelBottomVisible.value = true;
+  }
+  flushDockLayout();
+}
 
 const profileReady = ref(false);
 /** 当前激活的 dock 面板 key（用于判断编辑区内「项目设置」等标签是否在前台） */
@@ -38,6 +142,13 @@ const effectiveDockTheme = computed(() =>
 const naiveTheme = computed(() =>
   effectiveDockTheme.value === 'dark' ? darkTheme : null,
 );
+
+/** 仅顶栏：菜单项默认 42px，与标题栏 32px 不一致会裁切或显得文字偏上 */
+const menubarMenuOverrides = {
+  Menu: {
+    itemHeight: '32px',
+  },
+};
 
 watch(
   [themePreference, systemIsDark],
@@ -58,6 +169,46 @@ watch(themePreference, () => {
 });
 
 let mediaQuery: MediaQueryList | null = null;
+
+/** 无边框窗口时标题栏可拖拽；与 Wails --wails-draggable 配合 */
+const useFramelessChrome = computed(() => isWailsRuntime());
+
+const windowMaximized = ref(false);
+
+async function syncWindowMaximized() {
+  if (!isWailsRuntime()) {
+    return;
+  }
+  try {
+    windowMaximized.value = await WindowIsMaximised();
+  } catch {
+    /* devtools / 非宿主 */
+  }
+}
+
+function onTitlebarMinimize() {
+  if (isWailsRuntime()) {
+    WindowMinimise();
+  }
+}
+
+async function onTitlebarMaximizeToggle() {
+  if (!isWailsRuntime()) {
+    return;
+  }
+  WindowToggleMaximise();
+  await syncWindowMaximized();
+}
+
+function onTitlebarClose() {
+  if (isWailsRuntime()) {
+    Quit();
+  }
+}
+
+function onWindowFocusResyncMax() {
+  void syncWindowMaximized();
+}
 
 /** 中间编辑区：可关闭面板（项目设置、首选项）的 key */
 const PANEL_PROJECT_SETTINGS = 'panel-project-settings';
@@ -180,6 +331,9 @@ onMounted(() => {
   mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
   mediaQuery.addEventListener('change', onSystemSchemeChange);
   window.addEventListener('keydown', onGlobalKeydown);
+  window.addEventListener('focus', onWindowFocusResyncMax);
+
+  void syncWindowMaximized();
 
   void loadUserProfile().then((p) => {
     themePreference.value = p.theme;
@@ -196,24 +350,184 @@ onMounted(() => {
 onUnmounted(() => {
   mediaQuery?.removeEventListener('change', onSystemSchemeChange);
   window.removeEventListener('keydown', onGlobalKeydown);
+  window.removeEventListener('focus', onWindowFocusResyncMax);
 });
 </script>
 
 <template>
-  <n-config-provider :theme="naiveTheme" :locale="zhCN" :date-locale="dateZhCN">
+  <n-config-provider
+    :theme="naiveTheme"
+    :theme-overrides="menubarMenuOverrides"
+    :locale="zhCN"
+    :date-locale="dateZhCN"
+  >
     <!-- Wails/WebView2 下 n-layout 中间区易塌缩；改用 Grid 与 dock-shell 的绝对定位配合 -->
     <div class="provider-surface">
       <div
         class="app-frame"
         :class="{'dock-palette--light': effectiveDockTheme === 'light'}"
       >
-        <header class="app-menubar">
-          <n-menu
-            mode="horizontal"
-            :options="menubarOptions"
-            class="app-menubar-menu"
-            @update:value="handleMenubarSelect"
+        <header
+          class="app-menubar"
+          :class="{
+            'app-menubar--wails-drag': useFramelessChrome,
+            'app-menubar--frameless': useFramelessChrome,
+          }"
+        >
+          <div class="app-menubar-leading">
+            <img
+              src="/app-logo.svg"
+              width="20"
+              height="20"
+              class="app-menubar-logo"
+              alt=""
+            />
+          </div>
+          <div class="app-menubar-no-drag app-menubar-menu-wrap">
+            <n-menu
+              mode="horizontal"
+              :options="menubarOptions"
+              class="app-menubar-menu"
+              @update:value="handleMenubarSelect"
+            />
+          </div>
+          <!-- 可拖拽空白区：移动无边框窗体（与 Wails --wails-draggable 继承自标题栏） -->
+          <div
+            class="app-menubar-drag-spacer"
+            aria-hidden="true"
           />
+          <div class="app-menubar-no-drag app-menubar-actions">
+            <n-tooltip placement="bottom" trigger="hover">
+              <template #trigger>
+                <button
+                  type="button"
+                  class="app-menubar-icon-btn"
+                  :aria-pressed="panelRightVisible"
+                  :aria-label="
+                    panelRightVisible ? '收起右侧面板' : '展开右侧面板'
+                  "
+                  @click="toggleDockRight"
+                >
+                  <span
+                    class="codicon"
+                    :class="
+                      panelRightVisible
+                        ? 'codicon-layout-sidebar-right'
+                        : 'codicon-layout-sidebar-right-off'
+                    "
+                    aria-hidden="true"
+                  />
+                </button>
+              </template>
+              {{ panelRightVisible ? '收起检查器' : '展开检查器' }}
+            </n-tooltip>
+            <n-tooltip placement="bottom" trigger="hover">
+              <template #trigger>
+                <button
+                  type="button"
+                  class="app-menubar-icon-btn"
+                  :aria-pressed="panelLeftVisible"
+                  :aria-label="
+                    panelLeftVisible ? '收起左侧面板' : '展开左侧面板'
+                  "
+                  @click="toggleDockLeft"
+                >
+                  <span
+                    class="codicon"
+                    :class="
+                      panelLeftVisible
+                        ? 'codicon-layout-sidebar-left'
+                        : 'codicon-layout-sidebar-left-off'
+                    "
+                    aria-hidden="true"
+                  />
+                </button>
+              </template>
+              {{ panelLeftVisible ? '收起工程大纲' : '展开工程大纲' }}
+            </n-tooltip>
+            <n-tooltip placement="bottom" trigger="hover">
+              <template #trigger>
+                <button
+                  type="button"
+                  class="app-menubar-icon-btn"
+                  :aria-pressed="panelBottomVisible"
+                  :aria-label="
+                    panelBottomVisible ? '收起底部面板' : '展开底部面板'
+                  "
+                  @click="toggleDockBottom"
+                >
+                  <span
+                    class="codicon"
+                    :class="
+                      panelBottomVisible
+                        ? 'codicon-layout-panel'
+                        : 'codicon-layout-panel-off'
+                    "
+                    aria-hidden="true"
+                  />
+                </button>
+              </template>
+              {{ panelBottomVisible ? '收起日志/调试' : '展开日志/调试' }}
+            </n-tooltip>
+          </div>
+          <div
+            v-if="useFramelessChrome"
+            class="app-menubar-no-drag app-menubar-window-controls"
+          >
+            <n-tooltip placement="bottom" trigger="hover">
+              <template #trigger>
+                <button
+                  type="button"
+                  class="app-menubar-win-btn"
+                  aria-label="最小化"
+                  @click="onTitlebarMinimize"
+                >
+                  <span
+                    class="codicon codicon-chrome-minimize"
+                    aria-hidden="true"
+                  />
+                </button>
+              </template>
+              最小化
+            </n-tooltip>
+            <n-tooltip placement="bottom" trigger="hover">
+              <template #trigger>
+                <button
+                  type="button"
+                  class="app-menubar-win-btn"
+                  :aria-label="windowMaximized ? '还原' : '最大化'"
+                  @click="onTitlebarMaximizeToggle"
+                >
+                  <span
+                    class="codicon"
+                    :class="
+                      windowMaximized
+                        ? 'codicon-chrome-restore'
+                        : 'codicon-chrome-maximize'
+                    "
+                    aria-hidden="true"
+                  />
+                </button>
+              </template>
+              {{ windowMaximized ? '还原' : '最大化' }}
+            </n-tooltip>
+            <n-tooltip placement="bottom" trigger="hover">
+              <template #trigger>
+                <button
+                  type="button"
+                  class="app-menubar-win-btn app-menubar-win-btn--close"
+                  aria-label="关闭"
+                  @click="onTitlebarClose"
+                >
+                  <span
+                    class="codicon codicon-chrome-close"
+                    aria-hidden="true"
+                  />
+                </button>
+              </template>
+              关闭
+            </n-tooltip>
+          </div>
         </header>
 
         <div class="dock-wrap">
@@ -308,26 +622,155 @@ onUnmounted(() => {
 
 .app-menubar {
   grid-row: 1;
-  height: 28px;
-  padding: 0 4px 0 8px;
+  height: 32px;
+  padding: 0 8px 0 10px;
   display: flex;
-  align-items: center;
+  align-items: stretch;
+  gap: 0;
   box-sizing: border-box;
   border-bottom: 1px solid var(--n-border-color);
   background: var(--n-color-embedded);
+  font-family: 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+}
+
+.app-menubar--frameless {
+  padding-right: 0;
+}
+
+/* 无边框窗口：整块标题栏可拖拽，子项用 .app-menubar-no-drag 排除 */
+.app-menubar--wails-drag {
+  --wails-draggable: drag;
+}
+
+.app-menubar-no-drag {
+  --wails-draggable: no-drag;
+}
+
+.app-menubar-leading {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding-right: 6px;
+}
+
+.app-menubar-logo {
+  display: block;
+  flex-shrink: 0;
+  border-radius: 4px;
+  user-select: none;
+}
+
+.app-menubar-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.app-menubar-win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--n-text-color);
+  cursor: pointer;
+}
+
+.app-menubar-win-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.dock-palette--light .app-menubar-win-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.app-menubar-win-btn--close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.app-menubar-win-btn .codicon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.app-menubar-menu-wrap {
+  flex: 0 0 auto;
+  max-width: 100%;
+  display: flex;
+  align-items: stretch;
 }
 
 .app-menubar-menu {
-  flex: 1;
-  min-width: 0;
+  flex: 0 0 auto;
 }
 
-.app-menubar-menu :deep(.n-menu-item-content) {
-  padding: 0 12px;
+.app-menubar-drag-spacer {
+  flex: 1 1 auto;
+  min-width: 24px;
+  align-self: stretch;
 }
 
-.app-menubar-menu :deep(.n-menu-item-content__icon) {
-  margin-right: 6px;
+.app-menubar-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+}
+
+.app-menubar-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--n-text-color);
+  cursor: pointer;
+}
+
+.app-menubar-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dock-palette--light .app-menubar-icon-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.app-menubar-icon-btn .codicon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* 顶栏内水平菜单：背景与顶栏一致；修正项高与行高，使文字在 32px 栏内垂直居中 */
+.app-menubar-menu :deep(.n-menu) {
+  background: transparent;
+}
+
+.app-menubar-menu :deep(.n-menu.n-menu--horizontal) {
+  height: 100%;
+}
+
+.app-menubar-menu :deep(.n-menu.n-menu--horizontal .n-menu-item) {
+  margin-top: 0 !important;
+}
+
+.app-menubar-menu :deep(.n-menu.n-menu--horizontal .n-menu-item-content) {
+  line-height: 1.2;
+}
+
+.app-menubar-menu :deep(.n-menu.n-menu--horizontal .n-menu-item-content-header) {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.2;
 }
 
 .dock-wrap {

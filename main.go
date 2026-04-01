@@ -16,11 +16,13 @@ func main() {
 	app := NewApp()
 
 	// Create application with options
-	// 菜单栏由前端 Naive UI 绘制，便于与主题一致（Windows 原生 HMENU 不随沉浸式暗色变化）
+	// 无边框窗口：系统标题栏隐藏，由前端 app-menubar 提供拖拽区与最小化/最大化/关闭
+	// 菜单仍由前端 Naive UI 绘制，便于与主题一致
 	err := wails.Run(&options.App{
-		Title:  "assets-factory",
-		Width:  1024,
-		Height: 768,
+		Title:     "assets-factory",
+		Width:     1024,
+		Height:    768,
+		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
