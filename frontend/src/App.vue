@@ -1,6 +1,5 @@
 <script lang="ts" setup>
 import {darkTheme, dateZhCN, zhCN} from 'naive-ui';
-import type {MenuOption} from 'naive-ui';
 import {computed, nextTick, onMounted, onUnmounted, ref, watch} from 'vue';
 import {
   DockLayout,
@@ -13,7 +12,7 @@ import {
   isWailsRuntime,
 } from './theme/applyTheme';
 import {resolveEffectiveTheme, type ThemePreference} from './theme/settings';
-import {loadUserProfile, scheduleSaveUserProfile} from './config/userProfile';
+import {loadUserProfile} from './config/userProfile';
 import {
   Quit,
   WindowIsMaximised,
@@ -25,8 +24,11 @@ import InspectorView from './views/InspectorView.vue';
 import LogView from './views/LogView.vue';
 import PreferencesView from './views/PreferencesView.vue';
 import ProjectOutlineView from './views/ProjectOutlineView.vue';
+import NodeListView from './views/NodeListView.vue';
 import ProjectSettingsView from './views/ProjectSettingsView.vue';
 import WorkspaceView from './views/WorkspaceView.vue';
+import AppMenuBar from './components/AppMenuBar.vue';
+import type {AppMenuGroup} from './components/AppMenuBar.vue';
 
 const dockLayout = ref<DockLayoutInterface>();
 
@@ -125,7 +127,6 @@ function toggleDockBottom() {
   flushDockLayout();
 }
 
-const profileReady = ref(false);
 /** 当前激活的 dock 面板 key（用于判断编辑区内「项目设置」等标签是否在前台） */
 const activeDockPanelKey = ref('workspace');
 const themePreference = ref<ThemePreference>('system');
@@ -143,12 +144,7 @@ const naiveTheme = computed(() =>
   effectiveDockTheme.value === 'dark' ? darkTheme : null,
 );
 
-/** 仅顶栏：菜单项默认 42px，与标题栏 32px 不一致会裁切或显得文字偏上 */
-const menubarMenuOverrides = {
-  Menu: {
-    itemHeight: '32px',
-  },
-};
+const isDark = computed(() => effectiveDockTheme.value === 'dark');
 
 watch(
   [themePreference, systemIsDark],
@@ -160,13 +156,6 @@ watch(
   },
   {immediate: true},
 );
-
-watch(themePreference, () => {
-  if (!profileReady.value) {
-    return;
-  }
-  scheduleSaveUserProfile({theme: themePreference.value});
-});
 
 let mediaQuery: MediaQueryList | null = null;
 
@@ -210,9 +199,10 @@ function onWindowFocusResyncMax() {
   void syncWindowMaximized();
 }
 
-/** 中间编辑区：可关闭面板（项目设置、首选项）的 key */
+/** 中间编辑区：可关闭面板（项目设置、首选项、节点列表）的 key */
 const PANEL_PROJECT_SETTINGS = 'panel-project-settings';
 const PANEL_PREFERENCES = 'panel-preferences';
+const PANEL_NODE_LIST = 'panel-node-list';
 
 /**
  * 与官方示例一致：addPanel 时声明 closeable；已存在同 key 时库会移回目标网格，再 activePanel 即可聚焦。
@@ -234,11 +224,8 @@ function onSystemSchemeChange(ev: MediaQueryListEvent) {
   systemIsDark.value = ev.matches;
 }
 
-function onGlobalKeydown(ev: KeyboardEvent) {
-  if ((ev.ctrlKey || ev.metaKey) && ev.key === ',') {
-    ev.preventDefault();
-    openOrFocusClosableEditorTab(PANEL_PREFERENCES, '首选项');
-  }
+function onGlobalKeydown(_ev: KeyboardEvent) {
+  // AppMenuBar 组件内置了快捷键拦截，此处留空备扩展
 }
 
 function onDockActiveTabChange(
@@ -250,49 +237,74 @@ function onDockActiveTabChange(
   }
 }
 
-/** 水平菜单栏：顶层「文件 / 编辑」+ 子项，与桌面应用习惯一致 */
-const menubarOptions: MenuOption[] = [
+/** 菜单数据：顶层「文件 / 编辑」+ 子项（含快捷键 & Alt 助记键） */
+const appMenus: AppMenuGroup[] = [
   {
-    label: '文件',
+    label: '文件(F)',
+    altKey: 'F',
     key: 'menu-file',
     children: [
-      {label: '新建', key: 'file-new'},
-      {type: 'divider', key: 'fd1'},
-      {label: '项目设置', key: 'file-project-settings'},
-      {label: '首选项…', key: 'file-prefs'},
-      {type: 'divider', key: 'fd2'},
-      {label: '退出', key: 'file-quit'},
+      {label: '新建', key: 'file-new', shortcut: 'Ctrl+N'},
+      {type: 'divider', label: '', key: 'fd1'},
+      {
+        label: '项目设置',
+        key: 'file-project-settings',
+        action: () =>
+          openOrFocusClosableEditorTab(PANEL_PROJECT_SETTINGS, '项目设置'),
+      },
+      {
+        label: '首选项…',
+        key: 'file-prefs',
+        shortcut: 'Ctrl+,',
+        action: () =>
+          openOrFocusClosableEditorTab(PANEL_PREFERENCES, '首选项'),
+      },
+      {type: 'divider', label: '', key: 'fd2'},
+      {
+        label: '退出',
+        key: 'file-quit',
+        shortcut: 'Alt+F4',
+        action: () => {
+          if (isWailsRuntime()) Quit();
+        },
+      },
     ],
   },
   {
-    label: '编辑',
+    label: '编辑(E)',
+    altKey: 'E',
     key: 'menu-edit',
     children: [
-      {label: '撤销', key: 'edit-undo'},
-      {label: '重做', key: 'edit-redo'},
-      {type: 'divider', key: 'ed1'},
-      {label: '剪切', key: 'edit-cut'},
-      {label: '复制', key: 'edit-copy'},
-      {label: '粘贴', key: 'edit-paste'},
+      {label: '撤销', key: 'edit-undo', shortcut: 'Ctrl+Z'},
+      {label: '重做', key: 'edit-redo', shortcut: 'Ctrl+Y'},
+      {type: 'divider', label: '', key: 'ed1'},
+      {label: '剪切', key: 'edit-cut', shortcut: 'Ctrl+X'},
+      {label: '复制', key: 'edit-copy', shortcut: 'Ctrl+C'},
+      {label: '粘贴', key: 'edit-paste', shortcut: 'Ctrl+V'},
+    ],
+  },
+  {
+    label: '文档(D)',
+    altKey: 'D',
+    key: 'menu-doc',
+    children: [
+      {
+        label: '节点列表',
+        key: 'doc-node-list',
+        action: () =>
+          openOrFocusClosableEditorTab(PANEL_NODE_LIST, '节点列表'),
+      },
     ],
   },
 ];
 
-function handleMenubarSelect(key: string | number) {
-  const k = String(key);
-  if (k === 'file-prefs') {
-    openOrFocusClosableEditorTab(PANEL_PREFERENCES, '首选项');
-  } else if (k === 'file-project-settings') {
-    openOrFocusClosableEditorTab(PANEL_PROJECT_SETTINGS, '项目设置');
-  } else if (k === 'file-quit' && isWailsRuntime()) {
-    Quit();
-  }
-  // file-new、edit-*：占位
+function handleMenubarSelect(_key: string) {
+  // action 已在菜单项定义中内联，此处留空备扩展
 }
 
 /**
  * 主界面：@imengyu/vue-dock-layout
- * 左：工程大纲 | 右：属性/检查器 | 中上：工作区（项目设置/首选项由菜单动态打开并可关闭） | 中下：日志 + 调试
+ * 左：工程大纲 | 右：属性/检查器 | 中上：工作区（项目设置/首选项/节点列表等可关闭标签） | 中下：日志 + 调试
  */
 function initWorkbenchDock(api: DockLayoutInterface | undefined) {
   if (!api) {
@@ -337,7 +349,6 @@ onMounted(() => {
 
   void loadUserProfile().then((p) => {
     themePreference.value = p.theme;
-    profileReady.value = true;
   });
 
   nextTick(() => {
@@ -357,7 +368,6 @@ onUnmounted(() => {
 <template>
   <n-config-provider
     :theme="naiveTheme"
-    :theme-overrides="menubarMenuOverrides"
     :locale="zhCN"
     :date-locale="dateZhCN"
   >
@@ -384,11 +394,10 @@ onUnmounted(() => {
             />
           </div>
           <div class="app-menubar-no-drag app-menubar-menu-wrap">
-            <n-menu
-              mode="horizontal"
-              :options="menubarOptions"
-              class="app-menubar-menu"
-              @update:value="handleMenubarSelect"
+            <AppMenuBar
+              :menus="appMenus"
+              :is-dark="isDark"
+              @select="handleMenubarSelect"
             />
           </div>
           <!-- 可拖拽空白区：移动无边框窗体（与 Wails --wails-draggable 继承自标题栏） -->
@@ -574,6 +583,10 @@ onUnmounted(() => {
                 :theme="themePreference"
                 @update:theme="themePreference = $event"
               />
+              <NodeListView
+                v-else-if="panel.key === PANEL_NODE_LIST"
+                :visible="activeDockPanelKey === PANEL_NODE_LIST"
+              />
               <LogView v-else-if="panel.key === 'panel-log'" />
               <DebugView v-else-if="panel.key === 'panel-debug'" />
               <InspectorView v-else-if="panel.key === 'inspector'" />
@@ -705,10 +718,6 @@ onUnmounted(() => {
   align-items: stretch;
 }
 
-.app-menubar-menu {
-  flex: 0 0 auto;
-}
-
 .app-menubar-drag-spacer {
   flex: 1 1 auto;
   min-width: 24px;
@@ -748,29 +757,6 @@ onUnmounted(() => {
 .app-menubar-icon-btn .codicon {
   font-size: 15px;
   line-height: 1;
-}
-
-/* 顶栏内水平菜单：背景与顶栏一致；修正项高与行高，使文字在 32px 栏内垂直居中 */
-.app-menubar-menu :deep(.n-menu) {
-  background: transparent;
-}
-
-.app-menubar-menu :deep(.n-menu.n-menu--horizontal) {
-  height: 100%;
-}
-
-.app-menubar-menu :deep(.n-menu.n-menu--horizontal .n-menu-item) {
-  margin-top: 0 !important;
-}
-
-.app-menubar-menu :deep(.n-menu.n-menu--horizontal .n-menu-item-content) {
-  line-height: 1.2;
-}
-
-.app-menubar-menu :deep(.n-menu.n-menu--horizontal .n-menu-item-content-header) {
-  display: inline-flex;
-  align-items: center;
-  line-height: 1.2;
 }
 
 .dock-wrap {

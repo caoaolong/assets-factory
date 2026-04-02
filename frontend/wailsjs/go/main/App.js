@@ -6,12 +6,20 @@ export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
 }
 
+export function ReadNodesJSON() {
+  return window['go']['main']['App']['ReadNodesJSON']();
+}
+
 export function ReadProfileJSON() {
   return window['go']['main']['App']['ReadProfileJSON']();
 }
 
 export function ReadSettingsJSON() {
   return window['go']['main']['App']['ReadSettingsJSON']();
+}
+
+export function WriteNodesJSON(arg1) {
+  return window['go']['main']['App']['WriteNodesJSON'](arg1);
 }
 
 export function WriteProfileJSON(arg1) {

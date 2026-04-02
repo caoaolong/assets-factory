@@ -51,3 +51,14 @@ export function scheduleSaveUserProfile(data: UserProfileData): void {
     void writeProfileJSONRaw(`${JSON.stringify(data, null, 2)}\n`);
   }, 320);
 }
+
+/** 立即写入 profile.json，并取消未执行的防抖保存 */
+export async function saveUserProfileImmediate(
+  data: UserProfileData,
+): Promise<void> {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  await writeProfileJSONRaw(`${JSON.stringify(data, null, 2)}\n`);
+}

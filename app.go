@@ -85,3 +85,13 @@ func (a *App) ReadProfileJSON() (string, error) {
 func (a *App) WriteProfileJSON(json string) error {
 	return a.writeInstallJSONFile("profile.json", json)
 }
+
+// ReadNodesJSON 读取安装目录下 nodes.json；不存在则返回空字符串
+func (a *App) ReadNodesJSON() (string, error) {
+	return a.readInstallJSONFile("nodes.json")
+}
+
+// WriteNodesJSON 将节点列表写入安装目录 nodes.json
+func (a *App) WriteNodesJSON(json string) error {
+	return a.writeInstallJSONFile("nodes.json", json)
+}

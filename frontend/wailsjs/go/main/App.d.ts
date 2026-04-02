@@ -3,9 +3,13 @@
 
 export function Greet(arg1:string):Promise<string>;
 
+export function ReadNodesJSON():Promise<string>;
+
 export function ReadProfileJSON():Promise<string>;
 
 export function ReadSettingsJSON():Promise<string>;
+
+export function WriteNodesJSON(arg1:string):Promise<void>;
 
 export function WriteProfileJSON(arg1:string):Promise<void>;
 

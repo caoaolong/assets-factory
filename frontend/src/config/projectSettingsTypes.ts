@@ -1,60 +1,43 @@
-/** settings.json：项目级配置（模型提供方等） */
-
-export interface ModelEntry {
-  name: string;
-  code: string;
-}
-
-export interface ModelProvider {
-  id: string;
-  name: string;
-  baseUrl: string;
-  apiKey: string;
-  models: ModelEntry[];
-}
+/** settings.json：项目级配置（Dashscope API Key） */
 
 export interface ProjectSettingsData {
-  modelProviders: ModelProvider[];
+  dashscopeApiKey: string;
 }
 
 export function defaultProjectSettings(): ProjectSettingsData {
-  return {modelProviders: []};
+  return {dashscopeApiKey: ''};
 }
 
-function normalizeModelEntry(x: unknown): ModelEntry {
-  if (!x || typeof x !== 'object') {
-    return {name: '', code: ''};
-  }
-  const o = x as Record<string, unknown>;
-  return {
-    name: typeof o.name === 'string' ? o.name : '',
-    code: typeof o.code === 'string' ? o.code : '',
-  };
+function apiKeyFromProvider(o: Record<string, unknown>): string {
+  return typeof o.apiKey === 'string' ? o.apiKey : '';
 }
 
-function normalizeProvider(x: unknown, idx: number): ModelProvider {
-  if (!x || typeof x !== 'object') {
-    return {
-      id: `provider-${idx}`,
-      name: '',
-      baseUrl: '',
-      apiKey: '',
-      models: [],
-    };
+/** 从旧版 modelProviders 尽量取出 Dashscope 相关 Key */
+function migrateFromModelProviders(raw: unknown[]): string {
+  for (const x of raw) {
+    if (!x || typeof x !== 'object') {
+      continue;
+    }
+    const o = x as Record<string, unknown>;
+    const name = (typeof o.name === 'string' ? o.name : '').toLowerCase();
+    const base = (typeof o.baseUrl === 'string' ? o.baseUrl : '').toLowerCase();
+    if (
+      name.includes('dashscope') ||
+      base.includes('dashscope') ||
+      name.includes('灵积') ||
+      name.includes('通义')
+    ) {
+      const k = apiKeyFromProvider(o);
+      if (k) {
+        return k;
+      }
+    }
   }
-  const o = x as Record<string, unknown>;
-  const id =
-    typeof o.id === 'string' && o.id
-      ? o.id
-      : `provider-${idx}-${Date.now().toString(36)}`;
-  const modelsRaw = Array.isArray(o.models) ? o.models : [];
-  return {
-    id,
-    name: typeof o.name === 'string' ? o.name : '',
-    baseUrl: typeof o.baseUrl === 'string' ? o.baseUrl : '',
-    apiKey: typeof o.apiKey === 'string' ? o.apiKey : '',
-    models: modelsRaw.map(normalizeModelEntry),
-  };
+  const first = raw[0];
+  if (first && typeof first === 'object') {
+    return apiKeyFromProvider(first as Record<string, unknown>);
+  }
+  return '';
 }
 
 export function parseProjectSettings(raw: string): ProjectSettingsData {
@@ -64,10 +47,11 @@ export function parseProjectSettings(raw: string): ProjectSettingsData {
       return defaultProjectSettings();
     }
     const rec = o as Record<string, unknown>;
+    if (typeof rec.dashscopeApiKey === 'string') {
+      return {dashscopeApiKey: rec.dashscopeApiKey};
+    }
     const arr = Array.isArray(rec.modelProviders) ? rec.modelProviders : [];
-    return {
-      modelProviders: arr.map(normalizeProvider),
-    };
+    return {dashscopeApiKey: migrateFromModelProviders(arr)};
   } catch {
     return defaultProjectSettings();
   }

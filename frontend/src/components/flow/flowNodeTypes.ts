@@ -21,3 +21,8 @@ export interface FlowBaseNodeData {
   inputs: FlowPortDefinition[];
   outputs: FlowPortDefinition[];
 }
+
+/** 【图片生成】节点：输入桩「图片列表」+ 表单「提示词」→ 输出「图片列表」 */
+export interface FlowImageGenNodeData extends FlowBaseNodeData {
+  prompt: string;
+}
